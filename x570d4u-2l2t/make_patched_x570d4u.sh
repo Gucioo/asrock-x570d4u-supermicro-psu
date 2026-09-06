@@ -82,7 +82,7 @@ else:
 # 2) libipmipar.so for the 2L2T-RPSU variant
 import glob
 tot_n=tot_m=0
-for q in glob.glob(os.path.join(root,"usr/local/lib/ipmi/**/libipmipar.so.*"),recursive=True):
+for q in glob.glob(os.path.join(root,"usr/local/lib/ipmi/wolfpass*/libipmipar.so.*")):  # IPMIMain loads wolfpass; patching all variants overflows mtd3
     if os.path.islink(q): continue
     e=bytearray(open(q,"rb").read()); n=0;i=0
     while True:
@@ -120,7 +120,8 @@ mksquashfs "$WORK/rootfs" "$WORK/root_new.sqsh" -comp xz -b 131072 \
     -noappend -no-progress -no-xattrs >/dev/null 2>&1
 newsz=$(stat -c%s "$WORK/root_new.sqsh")
 echo "[*] rebuilt squashfs = $newsz bytes (slot $slot)"
-[ "$newsz" -le "$slot" ] || { echo "!! squashfs too big for slot"; exit 1; }
+MTD3=20021248  # /sys/class/mtd/mtd3/size on this board (the "root" partition)
+[ "$newsz" -le "$MTD3" ] || { echo "!! squashfs $newsz > mtd3 root partition $MTD3 -- will not mount for slot"; exit 1; }
 
 cp "$SRC" "$OUT"
 python3 - "$OUT" "$WORK/root_new.sqsh" "$sq_off" "$sq_end" <<'PY'

@@ -51,7 +51,7 @@ d=bytearray(open(p,"rb").read())
 if d[0x2048]==0x58: d[0x2048]=0x3c; open(p,"wb").write(d); print("[+] libpsuaccess 0x2048 -> 0x3c")
 import glob
 tot_n=tot_m=0
-for q in glob.glob(os.path.join(root,"usr/local/lib/ipmi/**/libipmipar.so.*"),recursive=True):
+for q in glob.glob(os.path.join(root,"usr/local/lib/ipmi/wolfpass*/libipmipar.so.*")):  # IPMIMain loads wolfpass; patching all variants overflows mtd3
     if os.path.islink(q): continue
     e=bytearray(open(q,"rb").read()); n=0;i=0
     while True:
@@ -88,7 +88,8 @@ echo "[+] debug shell init installed (sysadmin -> /bin/sh, your password)"
 # repack, size-check, splice, keep signed kernel byte-identical
 mksquashfs "$W/rootfs" "$W/rn.sqsh" -comp xz -b 131072 -noappend -no-progress -no-xattrs >/dev/null 2>&1
 newsz=$(stat -c%s "$W/rn.sqsh")
-[ "$newsz" -le "$slot" ] || { echo "!! squashfs too big ($newsz > $slot)"; exit 1; }
+MTD3=20021248  # /sys/class/mtd/mtd3/size on this board (the "root" partition)
+[ "$newsz" -le "$MTD3" ] || { echo "!! squashfs $newsz > mtd3 root partition $MTD3 -- will not mount ($newsz > $slot)"; exit 1; }
 cp "$SRC" "$OUT"
 python3 - "$OUT" "$W/rn.sqsh" "$SQ_OFF" "$SQ_END" <<'PY'
 import sys
