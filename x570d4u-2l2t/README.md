@@ -12,6 +12,53 @@ is for people who want to stay on ASRock's firmware.
 Tested against a **Supermicro PWS-441P-1H**. The approach is plain PMBus, so it should
 carry to other Supermicro PMBus supplies, but only that model has been tried.
 
+## Firmware versions — read first
+
+This work was reverse-engineered on one dump and then checked against ASRock's current
+release. **Two version numbers matter and they are not the same thing:**
+
+| | Our dump | Current ASRock download |
+|---|---|---|
+| Package / zip name | — | `X570D4U-2L2T(03.09.00)BMC.zip` |
+| Internal `FW_VERSION` (web-UI "BMC Firmware Version") | **1.35.00** | **3.09.00** |
+| Build date | Jul 12 2022 | Apr 24 2026 |
+| MegaRAC core (`FW_CODEBASEVERSION`) | `5.X` | `5.X` |
+
+ASRock **renumbered** the BMC line: older builds were `1.xx.00` (our dump, `1.35.00`),
+current builds are `3.xx.00` (`3.09.00`). For the current release the zip name and the GUI
+version match (`3.09.00`); the confusion is only if your board still runs an old `1.xx.00`
+build while the site now offers `3.09.00`. (The `5.X` you also see is the MegaRAC SPX *core*,
+not the package version.) Both are downloadable from ASRock — `X570D4U-2L2T(01.35.00)BMC.zip`
+and `X570D4U-2L2T(03.09.00)BMC.zip` — and in each the zip name equals the internal
+`FW_VERSION`, so what you download is what the GUI will show.
+
+**Good news — the PSU patches are portable across both versions.** The key library is
+identical:
+
+- `usr/local/lib/libpsuaccess.so.1.0.0` — **byte-for-byte identical** in 1.35.00 and 3.09.00
+  (md5 `f2f0697d…`). So the sensor-address patch **and the Option-E FRU model/serial
+  injection** apply unchanged to either.
+- wolfpass `libipmipar.so.6.31.0` — the file differs between versions, but both contain the
+  same **9× `mvn r3,#0x4f` + 4× `mov r3,#0xB0`**, and the patch is pattern-based, so it works
+  on both.
+
+**Only the flash *packaging* differs.** The rootfs squashfs is at `0x4C0000` in both, but the
+next module (the signed FIT kernel, "osimage") moved:
+
+| | 1.35.00 | 3.09.00 |
+|---|---|---|
+| squashfs start | `0x4C0000` | `0x4C0000` |
+| osimage (do-not-touch) | `0x17E0000` | `0x17C0000` |
+
+So the build scripts here use `SQ_END=0x17E0000` for **1.35.00**. For **3.09.00**, set
+`SQ_END=0x17C0000` (and confirm the mtd3 "root" size on your board). Everything else is the
+same.
+
+**Before you patch, regardless of version:** **dump _your own_ SPI flash** and work from
+that. Confirm `libpsuaccess` md5 = `f2f0697d9e5fd1ae3498b81382b5a032` (proves the offsets
+`0x2048` / injected routine at `0x1d80` / hook at `0x12a4` line up), confirm the wolfpass
+pattern counts, and confirm your osimage offset before flashing.
+
 ## The short version
 
 The X570D4U-2L2T's firmware already probes the **correct I2C bus** for the PSU — bus 2,
@@ -107,27 +154,129 @@ registers with standard decoding, so once the address is right the numbers come 
 no remapping. Keep this table to compare against after flashing; a mismatch would point at a
 scaling bug, but none is expected.
 
-## What works, what does not
+## What works
 
 * **Web UI PSU panel** and **`ipmitool sensor`**: voltage, current, power, temperature, fan.
-* **Model / ID / Revision / Serial: blank.** They come from the PMBus `MFR_*` commands
-  (`0x99`/`0x9a`/`0x9b`/`0x9e`), and this PSU does not answer them. The real identity is in
-  the FRU EEPROM at `0x38`, but ASRock's PSU code only reads the PMBus device at `0x3c`, not
-  the FRU. Same result Mrkvak had — read it off the label.
+* **Model / ID / Revision / Serial** — now populated too, live from the PSU's FRU EEPROM.
+  See **Option E** below. (Mrkvak stopped short of this — "read it off the label".)
+
+## Option E — PSU model / serial from the FRU EEPROM (SOLVED, confirmed on hardware)
+
+The identity strings come from the PMBus `MFR_*` commands (`0x99` ID, `0x9a` MODEL, `0x9b`
+REVISION, `0x9e` SERIAL) — and this Supermicro PSU **does not implement them** (all four NAK,
+returning `0xff`; verified with a proper block read, first byte = count = `0xff`). Those
+commands are *optional* in PMBus, and the supply reports `PMBUS_REVISION 0x98 = 0x22` (PMBus
+1.2) while simply omitting them. So there is nothing to fix on the PMBus side.
+
+Instead, the real identity lives in a **standard IPMI FRU EEPROM at i2c bus 2 / 7-bit `0x38`**
+(the bus scan shows two devices: `0x78`=PMBus `0x3c`, `0x70`=FRU `0x38`). Reading it directly:
+
+```
+i2c-test -b 2 -s 0x38 -rc 32 -m 1 -d 0x00   ->  01 01 00 00 03 0b 00 f0 ... ca 'SUPERMICRO' cb 'PWS-441P-1H' ...
+```
+
+decodes as a textbook FRU Product Info area: Manufacturer `SUPERMICRO`, Product `PWS-441P-1H`,
+Version `1.1`, Serial `P441PAG05HN0815`. **The stock firmware never reads it** (no FRU Device
+Locator SDR for the PSU; a 70 s i2c trace shows zero reads to `0x38`).
+
+`libpsuaccess` can't be fixed with a byte swap here: `CollectPsuInfo`/`RetrievePsuInfo` read a
+fixed 1–2 bytes per `MFR_*` command via a jump table — no block read, no loop — so repointing
+the command bytes would only ever fetch one character. The fix is a small **code injection**:
+
+* A 292-byte ARM routine (`fru/fru_fill.c`) is placed in `libpsuaccess.so`'s spare exec-segment
+  padding at VMA `0x1d80` (the executable `LOAD` is grown `0x1d80`→`0x1ee0` to cover it). It
+  reads the `0x38` FRU EEPROM, walks the Product Info type/length fields, and writes the four
+  strings into `CollectPsuInfo`'s 64-byte MFR fields.
+* `CollectPsuInfo`'s MFR loop at `0x12a4` is replaced with `mov r0,r6 / bl 0x1d80 /
+  add r5,r5,r0 / b 0x131c`, so it rides the existing "compliant PSU answered" path and the
+  Redfish/web backend renders the fields normally.
+
+Result in the web UI **System Information → Power Source**:
+
+```
+ID  SUPERMICRO   Model  PWS-441P-1H   Revision  1.1   Serial Number  P441PAG05HN0815
+```
+
+It reads the EEPROM live every poll, so a different Supermicro PSU shows its own strings. Safe
+failure mode: if the FRU read ever fails, the fields stay blank (no crash).
+
+### Bonus: reading the FRU without any patch
+
+ASRock's IPMI stack implements **Master Write-Read** (`ASRRMasterWriteRead`), so a remote host
+can read the same EEPROM with no firmware change once LAN IPMI auth is set up:
+
+```
+ipmitool -I lanplus -H <bmc> -U <user> -P <pw> raw 0x06 0x52 <bus> 0x70 0x40 0x00
+```
+
+(sweep `<bus>` to find the one mapping to i2c-2). Useful for Zabbix; it does **not** populate
+the web-UI panel (that needs Option E).
+
+## PSU fan control (optional)
+
+By default the Supermicro PSU runs its fan on its **own** internal thermal curve — the BMC
+only reads the speed (`FAN_COMMAND_1` = 0). At idle it sits around ~220 RPM. But the fan is
+in duty-cycle mode and **responds to PMBus `FAN_COMMAND_1` (0x3b)**, so you can drive it:
+writing 30% duty ramps Fan 1 to ~2600 RPM, and the PSU sets `STATUS_FANS` bit "Fan 1 Speed
+Overridden" while you hold it. (This PSU is single-fan — `FAN_CONFIG_1_2 = 0x80` — so the
+web UI's "Fan 2 = 0" is normal, not a fault.)
+
+[`psu-fanctl.sh`](psu-fanctl.sh) is a tiny busybox-shell daemon that turns that into a
+temperature curve driven by the PSU's own sensors (`READ_TEMPERATURE_1/2`), with a floor:
+
+```
+temp <= 50 C          -> 30 %   (floor: guaranteed airflow)
+50 C < temp < 70 C    -> linear 30..100 %
+temp >= 70 C          -> 100 %
+```
+
+The knobs (`FLOOR`, `TMIN`, `TMAX`, `INTERVAL`) are variables at the top of the script. It
+reads `max(T1, T2)`, ignores bad/absent-PSU reads, and self-regulates (more airflow cools the
+PSU, so the duty drops back to the floor). Verified on hardware: at 52 C it commanded 37%
+(~3600 RPM), which cooled the PSU to 50 C and settled at the 30% floor (~2750 RPM).
+
+**Install** (the daemon lives in `/conf`, which is jffs2 and persists — it does *not* fit in
+the mtd3-full rootfs squashfs):
+
+```
+# copy it onto the BMC's /conf (via the root shell), then:
+chmod 755 /conf/psu-fanctl.sh
+( trap "" HUP; /conf/psu-fanctl.sh >/dev/null 2>&1 </dev/null & )   # start now
+```
+
+For **boot-persistence**, `make_fru_x570d4u.sh` adds a one-line launcher to the boot hook
+(`[ -x /conf/psu-fanctl.sh ] && ( trap "" HUP; /conf/psu-fanctl.sh & )`), so after reflashing
+that image the daemon auto-starts whenever `/conf/psu-fanctl.sh` is present. To stop it: kill
+the process and write `FAN_COMMAND_1 = 0x0000` (`i2c-test -b 2 -s 0x3c -w -d 0x3b 0x00 0x00`)
+to hand the fan back to the PSU's autonomous control.
 
 ## Building and flashing
 
-[`make_patched_x570d4u.sh`](make_patched_x570d4u.sh) does the whole thing: carve the rootfs
-squashfs, apply both patches, rebuild it (checking it still fits its slot), and splice it
-back into a copy of your dump with everything else — including the signed kernel —
-byte-identical.
+Each script carves the rootfs squashfs, applies the patches, rebuilds it (checking it still
+fits its partition), and splices it back into a copy of the flash with everything else —
+including the signed kernel — byte-identical. Run as root so squashfs ownership survives, then
+flash the output **raw** (SPI programmer or `/dev/mtd`), never through ASRock's update tool.
+
+Pick the script for your situation:
+
+| Script | BMC version | Sensors | Model/serial (Option E) | Debug shell |
+|---|---|---|---|---|
+| [`make_patched_x570d4u.sh`](make_patched_x570d4u.sh) | 1.35.00 | ✅ | — | — |
+| [`make_fru_x570d4u.sh`](make_fru_x570d4u.sh) | 1.35.00 | ✅ | ✅ | ✅ (needs `DEBUG_PW`) |
+| [`make_fru_x570d4u_309.sh`](make_fru_x570d4u_309.sh) | **3.09.00** (current download) | ✅ | ✅ | ✗ (mtd3 full) |
 
 ```
-sudo ./make_patched_x570d4u.sh <original_dump.bin> x570d4u-asrock-psu3c.bin
+# 1.35.00, full build (sensors + FRU model/serial + a root shell for diagnosis):
+sudo DEBUG_PW='choose-one' ./make_fru_x570d4u.sh original-dump.bin x570d4u-fru.bin
+
+# 3.09.00 (the version you download from ASRock today; input can be the .ima or a dump):
+sudo ./make_fru_x570d4u_309.sh 'X570D4U-2L2T_3.09.00.ima' x570d4u-309-fru.bin
 ```
 
-Run it as root so squashfs ownership and permissions survive. Then flash
-`x570d4u-asrock-psu3c.bin` raw.
+The injected FRU routine is `fru/fru_fill.c` (compiled to `fru/fru_fill.bin`, embedded in the
+scripts); `fru/patch_libpsuaccess.py` is the standalone library patcher. Both `make_fru`
+scripts verify `libpsuaccess` md5 = `f2f0697d9e5fd1ae3498b81382b5a032` before patching, so
+they refuse to run against a lib whose offsets they don't know.
 
 **Before you flash, verify your original dump reads back clean** — that dump plus an SPI
 programmer is the whole recovery story. Nothing here is one-way: a bad flash is rewritten
