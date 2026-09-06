@@ -168,3 +168,30 @@ tracing `compmanager`), which needs a debug-shell image flashed with an SPI prog
 If you just want the PSU working on this board today, the OpenBMC port
 (<https://github.com/Gucioo/openbmc>) does it fully -- this stock-firmware route has hit a
 harder layer.
+
+### Live diagnosis on the running ASRock firmware (root shell)
+
+With a debug root shell (sysadmin/superuser after flashing an image that swaps sysadmin's
+login shell to /bin/sh -- see `make_debug_x570d4u.sh`), the following was established on the
+running stock firmware:
+
+* **The PSU is fully reachable and readable at bus 2 / 0x3c.** `i2c-test -b 2 --scan` finds
+  `0x78` (7-bit 0x3c, PMBus) and `0x70` (0x38, FRU). `pmbus-test -b 2 -s 0x3c -r -c READ_VIN`
+  and friends return correct standard values (VIN 241 V, VOUT 12.2 V, temp, fan, PIN, and
+  `STATUS_WORD` 0x0000). `CAPABILITY` = 0x90 (PEC supported), `PMBUS_REVISION` = 0x22.
+* **Both address patches are confirmed live** in the running libraries (`libpsuaccess`
+  byte 0x2048 = 0x3c; `libipmipar` 8x patched `mvn`).
+* **Yet every PSU sensor reports "Device Not Present"** (`ipmitool sensor get "PSU1 VIN"`).
+  Because *all* PSU sensors are gated, not just VOUT, this is a **global PSU-presence
+  determination that fails**, upstream of the reads -- not a per-register problem.
+* Anomaly: `VOUT_MODE` (0x20) consistently **fails PEC** (`Bad PEC 0x00 vs 0xff`) while every
+  other register passes PEC. Noted as a lead, but since it would only affect VOUT scaling it
+  is probably not the global presence gate.
+* No kernel i2c/pmbus errors (reads are pure userspace via libi2c, not the kernel pmbus
+  driver); no obvious PSU "present" flag in redis.
+
+**Open question / next step:** the presence gate lives in `IPMIMain` + `libipmipar`
+(`dev_asrr_psu_*`) or `compmanager`, and locating exactly what it probes to decide "present"
+(a register the Supermicro NAKs, e.g. MFR_ID; a PEC-checked read; or a hardware PRESENT#
+GPIO) requires disassembling those binaries (Ghidra). That is where this stands. The
+`make_debug_x570d4u.sh` image gives the root shell needed to keep iterating.
