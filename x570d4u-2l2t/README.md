@@ -294,3 +294,32 @@ address is used; or (c) Ghidra-trace the SensorMonitor read path to the address 
 
 Diagnostic method that cracked this (reusable): `i2c-test -b N --scan`, `pmbus-test -b N -s
 ADDR -r -c CMD`, and kernel `events/i2c` ftrace to see who reads what where.
+
+### SOLVED (root cause): IPMIMain loads the WOLFPASS libipmipar, not this SKU's
+
+The final piece, from IPMIMain's memory map (`/proc/<pid>/maps`):
+
+```
+/usr/local/lib/ipmi/wolfpass/libipmipar.so.6.31.0
+```
+
+**IPMIMain loads the `wolfpass` variant of `libipmipar`, not
+`1U4LW-X570/2L2T-RPSU/libipmipar.so` -- so all along we patched the wrong file.** The web UI
+worked because `libpsuaccess` (a single shared file) was patched; the IPMI sensor path uses
+this wolfpass lib, which still held the original `0xB0` at all 13 sites (9 `mvn #0x4f`, 4
+`mov #0xB0`) and so read the PSU at `0x58` -- exactly what the ftrace showed.
+
+**Fix: patch every `libipmipar.so` variant, not just this board's.** The build scripts here
+now loop over `usr/local/lib/ipmi/*/libipmipar.so.*` and apply `mvn #0x4f -> #0x87` and
+`mov #0xB0 -> #0x78` to each. wolfpass has 9+4 sites; other SKUs vary (0-11 `mvn`, 4 `mov`).
+
+Live-test the fix without reflashing (needs the debug root shell): copy a patched wolfpass
+lib to `/tmp`, `mount --bind` it over the original, `killall -9 IPMIMain` and relaunch
+`/usr/local/bin/IPMIMain --daemonize --reg-with-procmgr`, then
+`ipmitool sensor get "PSU1 VIN"`. Permanent fix: rebuild the image with the updated scripts
+(which patch all variants) and reflash.
+
+Why wolfpass? ASRock's firmware ships many SKU trees (wolfpass is an Intel Purley base) and
+IPMIMain resolves to it at runtime on this board; the Supermicro PSU sits at the same nominal
+`0xB0` Purley PSUs use, so only the address is wrong -- same one-line conceptual fix, just in
+the file that is actually loaded.

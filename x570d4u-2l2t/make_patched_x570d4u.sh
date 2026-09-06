@@ -80,14 +80,24 @@ elif d[0x2048]==0x3c:
 else:
     raise SystemExit("!! libpsuaccess 0x2048 unexpected: 0x%02x"%d[0x2048])
 # 2) libipmipar.so for the 2L2T-RPSU variant
-q=os.path.join(root,"usr/local/lib/ipmi/1U4LW-X570/2L2T-RPSU/libipmipar.so.1.0.0")
-e=bytearray(open(q,"rb").read())
-n=0;i=0
-while True:
-    i=e.find(b"\x4f\x30\xe0\xe3",i)
-    if i<0: break
-    e[i:i+4]=b"\x87\x30\xe0\xe3"; n+=1; i+=4
-open(q,"wb").write(e)
+import glob
+tot_n=tot_m=0
+for q in glob.glob(os.path.join(root,"usr/local/lib/ipmi/*/libipmipar.so.*")):
+    if os.path.islink(q): continue
+    e=bytearray(open(q,"rb").read()); n=0;i=0
+    while True:
+        i=e.find(b"\x4f\x30\xe0\xe3",i)
+        if i<0: break
+        e[i:i+4]=b"\x87\x30\xe0\xe3"; n+=1; i+=4
+    m=0;i=0
+    while True:
+        i=e.find(b"\xb0\x30\xa0\xe3",i)
+        if i<0: break
+        e[i:i+4]=b"\x78\x30\xa0\xe3"; m+=1; i+=4
+    if n or m:
+        open(q,"wb").write(e); tot_n+=n; tot_m+=m
+        print("[+] "+os.path.basename(os.path.dirname(q))+"/libipmipar: mvn x%d mov x%d"%(n,m))
+print("[+] libipmipar ALL variants: mvn#0x4f->#0x87 x%d, mov#0xB0->#0x78 x%d"%(tot_n,tot_m))
 print("[+] libipmipar.so mvn#0x4f -> #0x87  x%d"%n)
 if n==0 and e.count(b"\x87\x30\xe0\xe3")>=8: print("[=] libipmipar already patched")
 PY
