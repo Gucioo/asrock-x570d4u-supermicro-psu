@@ -149,7 +149,7 @@ enabling.
 * [Gucioo/openbmc](https://github.com/Gucioo/openbmc) — the OpenBMC port of this board,
   where the PMBus behaviour and the ground-truth table came from.
 
-## Status: partially working -- presence detection blocks it (open)
+## Status: web UI WORKS; IPMI/ipmitool path still gated (open)
 
 Flashed and booted on hardware. The address patches are confirmed in the running
 firmware, and the general IPMI/sensor stack works (motherboard fans and rails read). **But
@@ -195,3 +195,30 @@ running stock firmware:
 (a register the Supermicro NAKs, e.g. MFR_ID; a PEC-checked read; or a hardware PRESENT#
 GPIO) requires disassembling those binaries (Ghidra). That is where this stands. The
 `make_debug_x570d4u.sh` image gives the root shell needed to keep iterating.
+
+### UPDATE: the web UI PSU page works
+
+After flashing, the stock ASRock web UI **System Information -> Power Source** shows the PSU
+correctly -- the `libpsuaccess` patch does its job:
+
+```
+Power Supply Status  Power Supply OK
+AC Input Voltage     240.5 V     DC 12V Output Voltage  12.19 V
+AC Input Current     0.23 A      DC 12V Output Current  1.59 A
+AC Input Power       46 W        DC 12V Output Power    19 W
+Temperature 1        41 C        Temperature 2          49 C
+Fan 1                224 RPM     DC 12V Max Output Power 480 W
+ID / Model / Revision / Serial   N/A
+```
+
+All live values correct (match the PMBus ground truth); ID/Model/Serial N/A because the PSU
+does not answer `MFR_*`, as expected -- the same result Mrkvak got on the B650D4U. **This is
+the primary goal, reached.**
+
+Still open is only the **IPMI / `ipmitool sensor` path** (`libipmipar`, separate from
+`libpsuaccess`): PSU value sensors read "Device Not Present". Confirmed live that the PSU is
+readable at bus 2 / 0x3c, so it is a presence/init gate in `libipmipar`'s `dev_asrr_psu_*`
+path. Read params are compiled into `libipmipar` (not in the editable `IPMI.conf`, which
+only holds IPMB/SMBUS buses), so finishing it needs a Ghidra pass on `libipmipar` to find
+what the PSU init probes for presence (candidate: the `VOUT_MODE` read, which fails PEC on
+this PSU) and make it tolerate the failure. The web UI does not depend on that path.
