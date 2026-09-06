@@ -222,3 +222,37 @@ path. Read params are compiled into `libipmipar` (not in the editable `IPMI.conf
 only holds IPMB/SMBUS buses), so finishing it needs a Ghidra pass on `libipmipar` to find
 what the PSU init probes for presence (candidate: the `VOUT_MODE` read, which fails PEC on
 this PSU) and make it tolerate the failure. The web UI does not depend on that path.
+
+### Deep dive: why the IPMI path fails (disassembled), and where it stands
+
+The PSU sensors are not merely "unreadable" -- in the web UI **Sensor Reading** page they sit
+under **Disabled Sensors**, in the same bucket as empty fan headers (FAN1/FAN2) and
+unpopulated DIMM slots (DDR4_A2/B2). So the firmware's PSU **presence detection decided the
+PSU is absent at boot and disabled its sensors**, a persistent state -- not a live read
+failure.
+
+Disassembled `libipmipar` with the OpenBMC ARM cross-objdump to trace it:
+
+* `dev_asrr_psu_v0dot1_presence1_read` (@0xf094) writes `STATUS_WORD` (0x79) to the PSU at
+  the (patched) address 0x78/0x3c on bus 2, reads 2 bytes, and sets present=1 iff the
+  transaction returns success (`*(struct+0)==0`).
+* `dev_asrr_psu_vin_v0dot1_vin1_read` (@0xf1cc) reads `READ_VIN` (0x88) at 0x3c and does a
+  correct LINEAR11 decode.
+* Both funnel through `dev_ast2500_i2c_2_rwi2c` -> libi2c `i2c_writeread`; the web UI's
+  `libpsuaccess` uses `i2c_writeread_on_bus`, and the two are the same transaction (same
+  worker), differing only in how the device path is obtained -- **no PEC difference**.
+* Confirmed on the running board that the patched address (`87 30 e0 e3` -> 0x78) is live at
+  both `presence1_read` and `vin1_read`, and that `STATUS_WORD` and `READ_VIN` both read
+  correctly via `pmbus-test` at bus 2 / 0x3c.
+
+So the read code is correct and the PSU is readable -- yet boot-time presence detection still
+disabled the sensors. Leading theory: the detection runs early in boot, before the PSU's
+PMBus is responsive (or a subtle difference in that one transaction), fails, and the sensors
+are latched disabled with no retry. Forcing a re-detection by restarting the IPMI stack
+(`/etc/init.d/ipmistack restart`) **segfaults** and corrupts the shared i2c semaphore
+(recovered by a reboot), so a clean re-detect from userspace is not available.
+
+**Status: the web UI works; the IPMI/ipmitool path remains blocked at this boot-time
+presence-disable, and cracking it further needs either the ability to re-run detection
+cleanly or deeper tracing of the boot detection (a genuinely deep RE task).** The debug
+shell (sysadmin/superuser) is in place for anyone continuing it.
