@@ -148,3 +148,23 @@ enabling.
   engineering this follows.
 * [Gucioo/openbmc](https://github.com/Gucioo/openbmc) — the OpenBMC port of this board,
   where the PMBus behaviour and the ground-truth table came from.
+
+## Status: partially working -- presence detection blocks it (open)
+
+Flashed and booted on hardware. The address patches are confirmed in the running
+firmware, and the general IPMI/sensor stack works (motherboard fans and rails read). **But
+the PSU still does not read:** `ipmitool sensor get "PSU1 VIN"` returns *"Unable to read
+sensor: Device Not Present"*, and the web UI panel stays empty.
+
+So on this board's **`2L2T-RPSU`** SKU there is a **presence-detection gate ahead of the
+read** that the address patch does not satisfy -- the firmware concludes no PSU is present
+and never issues the PMBus read. This differs from Mrkvak's B650D4U, where the address patch
+alone was sufficient. The presence mechanism is not yet identified (candidates: a probe in
+`compmanager`, an unpatched address reference -- there are 4 literal `mov r3,#0xB0` in
+`libipmipar` left unpatched -- or a hardware PRESENT# signal from the redundant-PSU
+backplane). Pinning it down needs a root shell on the running ASRock firmware (`i2cdetect`,
+tracing `compmanager`), which needs a debug-shell image flashed with an SPI programmer.
+
+If you just want the PSU working on this board today, the OpenBMC port
+(<https://github.com/Gucioo/openbmc>) does it fully -- this stock-firmware route has hit a
+harder layer.
