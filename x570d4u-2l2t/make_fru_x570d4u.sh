@@ -124,7 +124,6 @@ grep -q '^sysadmin:x:0:0:sysadmin:/root:/bin/sh\$' /conf/passwd || {
   grep -v '^sysadmin:' /conf/passwd > /tmp/.p; echo 'sysadmin:x:0:0:sysadmin:/root:/bin/sh' >> /tmp/.p; cp /tmp/.p /conf/passwd; rm -f /tmp/.p; }
 [ -f /conf/shadow ] && {
   grep -v '^sysadmin:' /conf/shadow > /tmp/.s; echo "sysadmin:\${H}:17823:0:99999:7:::" >> /tmp/.s; cp /tmp/.s /conf/shadow; rm -f /tmp/.s; }
-# optional PSU fan curve: if you dropped psu-fanctl.sh into /conf, start it at boot
 [ -x /conf/psu-fanctl.sh ] && ( trap "" HUP; /conf/psu-fanctl.sh >/dev/null 2>&1 </dev/null & )
 exit 0
 EOF
