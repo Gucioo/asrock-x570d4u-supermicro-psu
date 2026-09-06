@@ -51,7 +51,7 @@ d=bytearray(open(p,"rb").read())
 if d[0x2048]==0x58: d[0x2048]=0x3c; open(p,"wb").write(d); print("[+] libpsuaccess 0x2048 -> 0x3c")
 import glob
 tot_n=tot_m=0
-for q in glob.glob(os.path.join(root,"usr/local/lib/ipmi/*/libipmipar.so.*")):
+for q in glob.glob(os.path.join(root,"usr/local/lib/ipmi/**/libipmipar.so.*"),recursive=True):
     if os.path.islink(q): continue
     e=bytearray(open(q,"rb").read()); n=0;i=0
     while True:

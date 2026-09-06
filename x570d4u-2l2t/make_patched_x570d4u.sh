@@ -82,7 +82,7 @@ else:
 # 2) libipmipar.so for the 2L2T-RPSU variant
 import glob
 tot_n=tot_m=0
-for q in glob.glob(os.path.join(root,"usr/local/lib/ipmi/*/libipmipar.so.*")):
+for q in glob.glob(os.path.join(root,"usr/local/lib/ipmi/**/libipmipar.so.*"),recursive=True):
     if os.path.islink(q): continue
     e=bytearray(open(q,"rb").read()); n=0;i=0
     while True:
