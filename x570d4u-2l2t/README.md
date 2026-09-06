@@ -256,3 +256,41 @@ are latched disabled with no retry. Forcing a re-detection by restarting the IPM
 presence-disable, and cracking it further needs either the ability to re-run detection
 cleanly or deeper tracing of the boot detection (a genuinely deep RE task).** The debug
 shell (sysadmin/superuser) is in place for anyone continuing it.
+
+### BREAKTHROUGH via kernel ftrace: the runtime uses the OLD address
+
+The AMI kernel has i2c tracepoints. Enabling them (`echo 1 >
+/sys/kernel/debug/tracing/events/i2c/enable`) and watching while IPMIMain polls shows the
+decisive fact:
+
+```
+SensorMonitorTa-327 i2c_write: i2c-2 a=058 f=0200 l=1 [88]   <- READ_VIN at address 0x58
+SensorMonitorTa-327 i2c_read:  i2c-2 a=058 l=2
+```
+
+**IPMIMain reads the PSU at 7-bit `0x58` (= 8-bit 0xB0, the ORIGINAL ASRock address), not
+`0x3c`** -- even though every address immediate in the running `libipmipar` is confirmed
+patched to 0x3c (`presence1_read`, `vin1_read`, and all 4 literal `mov #0xB0` sites read back
+as 0x78 on the live board). Nothing is at 0x58 on this bus, so every PSU read NAKs and the
+sensors report "reading unavailable" (scanning is enabled; the read simply fails).
+
+So the sensor-monitor's PSU address does **not** come from the code we patched. It comes from
+a source that still holds 0xB0 -- most likely a **sensor table built at the original first
+boot and persisted in `/conf`, which survived the reflash** (this port deliberately preserves
+`/conf`). It is not a plain byte in `SDR.dat`/`IPMI.conf` (the visible 0x58/0xB2 there are a
+string's 'X' and a pointer low-byte), so it is encoded, or built at init from a source not
+yet found.
+
+This is why the straight lib-patch that worked on Mrkvak's B650D4U is **necessary but not
+sufficient** here: the web UI path (`libpsuaccess`, no persisted table) works, but the IPMI
+sensor path reads a stale 0xB0.
+
+**Open next steps** (need a root shell, which is in place): (a) dynamically trace IPMIMain's
+`ioctl(I2C_SLAVE)`/read to catch the exact call site and its address source (LD_PRELOAD shim
+cross-compiled with the OpenBMC ARM toolchain, injected via `/etc/ld.so.preload` + reboot to
+avoid the live-restart segfault); or (b) force the sensor config to regenerate from the
+patched code (clear the relevant `/conf` cache / factory-default the config) so the 0x3c
+address is used; or (c) Ghidra-trace the SensorMonitor read path to the address source.
+
+Diagnostic method that cracked this (reusable): `i2c-test -b N --scan`, `pmbus-test -b N -s
+ADDR -r -c CMD`, and kernel `events/i2c` ftrace to see who reads what where.
