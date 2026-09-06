@@ -149,7 +149,7 @@ enabling.
 * [Gucioo/openbmc](https://github.com/Gucioo/openbmc) — the OpenBMC port of this board,
   where the PMBus behaviour and the ground-truth table came from.
 
-## Status: web UI WORKS; IPMI/ipmitool path still gated (open)
+## Status: SOLVED -- web UI AND IPMI/ipmitool both read the PSU
 
 Flashed and booted on hardware. The address patches are confirmed in the running
 firmware, and the general IPMI/sensor stack works (motherboard fans and rails read). **But
@@ -323,3 +323,24 @@ Why wolfpass? ASRock's firmware ships many SKU trees (wolfpass is an Intel Purle
 IPMIMain resolves to it at runtime on this board; the Supermicro PSU sits at the same nominal
 `0xB0` Purley PSUs use, so only the address is wrong -- same one-line conceptual fix, just in
 the file that is actually loaded.
+
+### CONFIRMED WORKING on hardware
+
+After bind-mounting the patched **wolfpass** `libipmipar` and restarting IPMIMain, the IPMI
+sensors read correctly over the network (`ipmitool -I lanplus ... sensor`):
+
+```
+PSU1 VIN   238 V     PSU1 PIN   47 W
+PSU1 IOUT  1.5 A     PSU1 POUT  19 W
+PSU1 Temp  41 C      PSU1 Fan   200 RPM     (all state "ok")
+```
+
+matching the PMBus ground truth. On restart the console prints `PSU MFR err: PSUNum=0,
+cmd=99/9a/9b/9e` -- IPMIMain now reaches the PSU and only the `MFR_*` identity commands fail
+(the Supermicro does not answer them), which is why Model/Serial stay N/A. Both the web UI
+and IPMI/ipmitool paths now work -- the full result, same as Mrkvak's B650D4U.
+
+**Make it permanent:** the bind-mount is a live test (lost on reboot). Rebuild the image with
+the updated `make_patched_x570d4u.sh` / `make_debug_x570d4u.sh` here (they patch every
+`libipmipar.so` variant, wolfpass included) and reflash. Then both paths work from a clean
+boot with no runtime surgery.
