@@ -2,6 +2,12 @@
 Hi everyone,
 this repository should contain most public stuff from my homleab projects. For now, it will be mostly about ASRock B650D4U in SuperMicro SC813 1U chassis. What can you look forward to? 3D models and some reverse engineering.
 
+## Related boards
+
+* **ASRock Rack X570D4U-2L2T** with a Supermicro PMBus PSU: same idea, different
+  board -- see [`x570d4u-2l2t/`](x570d4u-2l2t/). On that board only the PSU I2C
+  address is wrong (the bus is already correct), so it is a smaller patch.
+
 ## 3D models
 In the "3d" directory, you'll find .stl and .FCStd (FreeCAD) files for IO shield SC813 and B650D4U.
 

@@ -1,0 +1,11 @@
+=== X570D4U-2L2T Supermicro PWS-441P-1H  PMBus ground truth (via OpenBMC, i2c-2 @0x3c) ===
+  VIN  (0x88)   raw=0xf9e2  ->   241.000 V
+  VOUT (0x8b)   raw=0x1866  ->    12.199 V
+  IOUT (0x8c)   raw=0xd08c  ->     2.188 A
+  POUT (0x96)   raw=0x001a  ->    26.000 W
+  PIN  (0x97)   raw=0x002f  ->    47.000 W
+  TEMP (0x8d)   raw=0x0021  ->    33.000 C
+  FAN  (0x90)   raw=0x285f  ->  3040.000 RPM
+  FANCMD(0x3b)  raw=0x001e  ->    30.000 %
+
+VOUT_MODE exponent = -9 (2^-9)  [everything decodes with STANDARD PMBus LINEAR]
