@@ -271,24 +271,32 @@ flash the output **raw** (SPI programmer or `/dev/mtd`), never through ASRock's 
 
 Pick the script for your situation:
 
-| Script | BMC version | Sensors | Model/serial (Option E) | Debug shell |
-|---|---|---|---|---|
-| [`make_patched_x570d4u.sh`](make_patched_x570d4u.sh) | 1.35.00 | ✅ | — | — |
-| [`make_fru_x570d4u.sh`](make_fru_x570d4u.sh) | 1.35.00 | ✅ | ✅ | ✅ (needs `DEBUG_PW`) |
-| [`make_fru_x570d4u_309.sh`](make_fru_x570d4u_309.sh) | **3.09.00** (current download) | ✅ | ✅ | ✗ (mtd3 full) |
+| Script | BMC version | Sensors | Model/serial | Debug shell | Boot-hook extra |
+|---|---|---|---|---|---|
+| [`make_patched_x570d4u.sh`](make_patched_x570d4u.sh) | 1.35.00 | ✅ | — | — | — |
+| [`make_fru_x570d4u.sh`](make_fru_x570d4u.sh) | 1.35.00 | ✅ | ✅ | ✅ | starts `/conf/psu-fanctl.sh` if present (PSU fan curve) |
+| [`make_fru24_x570d4u.sh`](make_fru24_x570d4u.sh) | 1.35.00 | ✅ | ✅ | ✅ | re-applies a **24 h** web session timeout each boot |
+| [`make_fru_x570d4u_309.sh`](make_fru_x570d4u_309.sh) | **3.09.00** (current download) | ✅ | ✅ | ✗ (mtd3 full) | — |
+
+The two 1.35.00 `make_fru*` builds differ only in the boot-hook extra (fan-curve launcher vs
+24 h timeout); the 24 h re-apply is idempotent and only bumps the default 10 min, and unlike a
+`/conf` file it survives a reflash (the flash resets `/conf/timeouts` to 10, the hook bumps it
+back). All `make_fru*` scripts need `DEBUG_PW` for the shell and verify `libpsuaccess`
+md5 = `f2f0697d…` before patching.
 
 ```
-# 1.35.00, full build (sensors + FRU model/serial + a root shell for diagnosis):
-sudo DEBUG_PW='choose-one' ./make_fru_x570d4u.sh original-dump.bin x570d4u-fru.bin
+# 1.35.00, full build with the PSU fan-curve hook + a root shell for diagnosis:
+sudo DEBUG_PW='choose-one' ./make_fru_x570d4u.sh   original-dump.bin x570d4u-fru.bin
+
+# 1.35.00, same but with a baked-in 24h web session timeout instead of the fan hook:
+sudo DEBUG_PW='choose-one' ./make_fru24_x570d4u.sh original-dump.bin x570d4u-fru24.bin
 
 # 3.09.00 (the version you download from ASRock today; input can be the .ima or a dump):
 sudo ./make_fru_x570d4u_309.sh 'X570D4U-2L2T_3.09.00.ima' x570d4u-309-fru.bin
 ```
 
 The injected FRU routine is `fru/fru_fill.c` (compiled to `fru/fru_fill.bin`, embedded in the
-scripts); `fru/patch_libpsuaccess.py` is the standalone library patcher. Both `make_fru`
-scripts verify `libpsuaccess` md5 = `f2f0697d9e5fd1ae3498b81382b5a032` before patching, so
-they refuse to run against a lib whose offsets they don't know.
+scripts); `fru/patch_libpsuaccess.py` is the standalone library patcher.
 
 **Before you flash, verify your original dump reads back clean** — that dump plus an SPI
 programmer is the whole recovery story. Nothing here is one-way: a bad flash is rewritten
