@@ -245,10 +245,22 @@ chmod 755 /conf/psu-fanctl.sh
 ```
 
 For **boot-persistence**, `make_fru_x570d4u.sh` adds a one-line launcher to the boot hook
-(`[ -x /conf/psu-fanctl.sh ] && ( trap "" HUP; /conf/psu-fanctl.sh & )`), so after reflashing
-that image the daemon auto-starts whenever `/conf/psu-fanctl.sh` is present. To stop it: kill
+(`[ -x /conf/psu-fanctl.sh ] && ( trap "" HUP; /conf/psu-fanctl.sh & )`), so once
+`/conf/psu-fanctl.sh` is present the daemon **auto-starts on every reboot**. To stop it: kill
 the process and write `FAN_COMMAND_1 = 0x0000` (`i2c-test -b 2 -s 0x3c -w -d 0x3b 0x00 0x00`)
 to hand the fan back to the PSU's autonomous control.
+
+> **Important — a full SPI flash wipes `/conf`.** The `/conf` jffs2 partition survives
+> *reboots* but **not** a whole-chip programmer flash: the image you flash carries the
+> original dump's `/conf`, so it overwrites `psu-fanctl.sh` (and any `/conf/timeouts` change).
+> After each reflash, re-install the daemon (and re-apply the session timeout if you set one):
+> ```
+> cat > /conf/psu-fanctl.sh   # paste the script, then Ctrl-D
+> chmod 755 /conf/psu-fanctl.sh
+> sed -i 's/:10:0:0:0/:1440:0:0:0/' /conf/timeouts   # optional: 24h web timeout
+> ```
+> The boot hook then auto-starts it from that point on. (The root shell itself is re-applied
+> every boot by the hook, so SSH access survives the `/conf` reset.)
 
 ## Building and flashing
 
